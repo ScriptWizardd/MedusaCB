@@ -1,0 +1,12 @@
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Unnecessary folders
+static/monaco-editor/
+static/prism/
+
+# Generated files
+GeneratedCodes/*
