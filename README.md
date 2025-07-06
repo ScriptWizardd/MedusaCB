@@ -5,9 +5,10 @@ A visual code block scripting language that converts logicflow-style codeblocks 
 ____________________________________________________________________________________________________
 
 Medusa Code Blocks (Medusa CB) is a web-based visual programming environment designed to help Meta Horizon Worlds codeblock scripters transition to the Medusa 
-visual coding language and ultimately to Python. Powered by Blockly, it offers an intuitive drag-and-drop interface for creating Medusa-inspired scripts, which 
-can be converted to Python code, tested for compilation and runtime errors, and downloaded as .py files. The application is fully offline-capable, making it 
-ideal for educational settings, prototyping, or environments without internet access.
+visual coding language and ultimately to Python. This language is in no way shape or form affiliated with Meta,  or Meta Horizon Worlds. Powered by Blockly, 
+it offers an intuitive drag-and-drop interface for creating Medusa-inspired scripts, which can be converted to Python code, tested for compilation and runtime 
+errors, and downloaded as .py files. The application is fully offline-capable, making it ideal for educational settings, prototyping, or environments without 
+internet access.
 
 Purpose:
 
