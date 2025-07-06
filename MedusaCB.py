@@ -8,7 +8,7 @@ from flask_cors import CORS
 from io import StringIO
 from contextlib import redirect_stdout, redirect_stderr
 import logging
-import ast
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -34,37 +34,50 @@ if not os.access(GENERATED_CODES_DIR, os.W_OK):
     raise PermissionError('GeneratedCodes directory is not writable')
 
 def preprocess_code(code):
-    """Preprocess code to handle type conversions explicitly and ensure compatibility."""
+    """Preprocess code to handle type conversions, especially after math operations."""
     try:
-        tree = ast.parse(code)
-        modified = False
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and hasattr(node.func, 'id'):
-                if node.func.id in ['str', 'float', 'bool']:
-                    if node.args and isinstance(node.args[0], ast.Num):
-                        continue  # Numeric literals are fine
-                    elif node.args and isinstance(node.args[0], ast.Name):
-                        var_name = node.args[0].id
-                        # Check if the variable is part of a math operation
-                        parent = next((n for n in ast.walk(tree) if isinstance(n, ast.BinOp) and (n.left.id == var_name if hasattr(n.left, 'id') else False) or (n.right.id == var_name if hasattr(n.right, 'id') else False)), None)
-                        if parent and node.func.id == 'str':
-                            # If used in a math operation, ensure conversion happens after
-                            code_lines = code.split('\n')
-                            for i, line in enumerate(code_lines):
-                                if f"{node.func.id}({var_name})" in line:
-                                    code_lines[i] = line.replace(f"{node.func.id}({var_name})", var_name)
-                                    # Insert conversion after the operation
-                                    insert_point = i + 1
-                                    code_lines.insert(insert_point, f"{var_name} = {node.func.id}({var_name})")
-                                    modified = True
-                                    break
-        return '\n'.join(code_lines) if modified else code
-    except SyntaxError as se:
-        logging.error('Syntax error during preprocessing: %s', str(se))
-        return code
+        logging.info('Received code for preprocessing: %s', code)
+        code_lines = code.split('\n')
+        adjusted_lines = []
+        math_vars = {}  # Track math variables and their lines
+        conversion_lines = []
+
+        for i, line in enumerate(code_lines):
+            line = line.strip()
+            if line:
+                logging.debug('Processing line %d: %s', i, line)
+                # Detect math operation assignments
+                math_match = re.search(r'(\w+)\s*=\s*([\w\s+\-*/]+)', line)
+                if math_match:
+                    var_name = math_match.group(1)
+                    math_vars[var_name] = i
+                    adjusted_lines.append(line)
+                # Detect str() conversion
+                str_match = re.search(r'(\w+)\s*=\s*str\(([\w]+)\)', line)
+                if str_match:
+                    var_name, source_var = str_match.groups()
+                    if source_var in math_vars:
+                        adjusted_lines.append(line)  # Keep conversion if tied to math
+                    else:
+                        conversion_lines.append((i, line))
+                else:
+                    adjusted_lines.append(line)
+
+        # Adjust standalone conversions to follow math operations
+        for conv_idx, conv_line in conversion_lines:
+            str_match = re.search(r'(\w+)\s*=\s*str\(([\w]+)\)', conv_line)
+            if str_match:
+                var_name, source_var = str_match.groups()
+                if source_var in math_vars:
+                    adjusted_lines.insert(math_vars[source_var] + 1, conv_line)
+                    adjusted_lines[conv_idx] = ''  # Clear original position
+
+        preprocessed_code = '\n'.join(line for line in adjusted_lines if line)
+        logging.info('Preprocessed code: %s', preprocessed_code)
+        return preprocessed_code
     except Exception as e:
         logging.error('Preprocessing exception: %s', str(e))
-        return code
+        return code  # Fallback to original code on error
 
 @app.route('/')
 def serve_index():
@@ -85,12 +98,17 @@ def convert_code():
         
         data = request.get_json()
         code = data.get('code', '')
+        logging.info('Received /convert request with code: %s', code)
         if not code:
             return jsonify({'error': 'No code provided'}), 400
         
-        # Preprocess the code to handle conversions
+        # Log the raw code structure
+        logging.debug('Raw code lines: %s', code.split('\n'))
+        
+        # Preprocess the code
         cleaned_code = '\n'.join(line.strip() for line in code.split('\n') if line.strip())
         preprocessed_code = preprocess_code(cleaned_code)
+        logging.debug('Cleaned and preprocessed code: %s', preprocessed_code)
         
         stdout = StringIO()
         stderr = StringIO()
@@ -98,10 +116,13 @@ def convert_code():
         try:
             with redirect_stdout(stdout), redirect_stderr(stderr):
                 exec(preprocessed_code, {}, local_env)
+            logging.info('Code executed successfully')
         except Exception as exec_error:
             error_msg = ''.join(traceback.format_exception(type(exec_error), exec_error, exec_error.__traceback__))
+            error_lines = error_msg.split('\n')
+            specific_error = error_lines[-2] if len(error_lines) > 2 else error_msg
             if "unsupported operand type" in error_msg or "invalid literal" in error_msg:
-                return jsonify({'error': 'Type conversion error: Ensure numeric values for math operations before string conversion'}), 400
+                return jsonify({'error': f'Type conversion error: {specific_error}'}), 400
             logging.error('Conversion error: %s', error_msg)
             return jsonify({'error': f'Code execution failed: {error_msg}'}), 400
         
@@ -111,6 +132,7 @@ def convert_code():
             return jsonify({'error': f'Code execution error: {error_output}'}), 400
         
         stdout_output = stdout.getvalue()
+        logging.info('Conversion stdout: %s', stdout_output)
         return jsonify({
             'message': 'Code successfully converted and tested',
             'output': stdout_output
@@ -130,6 +152,7 @@ def download_code():
         
         data = request.get_json()
         code = data.get('code', '')
+        logging.info('Received /download request with code: %s', code)
         if not code:
             return jsonify({'error': 'No code to download'}), 400
         
@@ -140,6 +163,7 @@ def download_code():
         try:
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(code)
+            logging.info('File saved: %s', filepath)
         except Exception as e:
             logging.error('Failed to save file: %s', str(e))
             return jsonify({'error': f'Failed to save file: {str(e)}'}), 500
